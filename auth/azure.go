@@ -15,7 +15,6 @@
 package auth
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -30,8 +29,7 @@ import (
 )
 
 const (
-	AzureAuthPath    = ".azure/credentials.json"
-	AzureProfilePath = ".azure/azureProfile.json"
+	AzureAuthPath = ".azure/credentials.json"
 )
 
 // A version of the Options struct from platform/api/azure that only
@@ -52,47 +50,6 @@ type Options struct {
 	StorageEndpointSuffix string
 }
 
-type AzureEnvironment struct {
-	ActiveDirectoryEndpointURL                        string `json:"activeDirectoryEndpointUrl"`
-	ActiveDirectoryGraphAPIVersion                    string `json:"activeDirectoryGraphApiVersion"`
-	ActiveDirectoryGraphResourceID                    string `json:"activeDirectoryGraphResourceId"`
-	ActiveDirectoryResourceID                         string `json:"activeDirectoryResourceId"`
-	AzureDataLakeAnalyticsCatalogAndJobEndpointSuffix string `json:"azureDataLakeAnalyticsCatalogAndJobEndpointSuffix"`
-	AzureDataLakeStoreFileSystemEndpointSuffix        string `json:"azureDataLakeStoreFileSystemEndpointSuffix"`
-	GalleryEndpointURL                                string `json:"galleryEndpointUrl"`
-	KeyVaultDNSSuffix                                 string `json:"keyVaultDnsSuffix"`
-	ManagementEndpointURL                             string `json:"managementEndpointUrl"`
-	Name                                              string `json:"name"`
-	PortalURL                                         string `json:"portalUrl"`
-	PublishingProfileURL                              string `json:"publishingProfileUrl"`
-	ResourceManagerEndpointURL                        string `json:"resourceManagerEndpointUrl"`
-	SqlManagementEndpointURL                          string `json:"sqlManagementEndpointUrl"`
-	SqlServerHostnameSuffix                           string `json:"sqlServerHostnameSuffix"`
-	StorageEndpointSuffix                             string `json:"storageEndpointSuffix"`
-}
-
-type AzureManagementCertificate struct {
-	Cert string `json:"cert"`
-	Key  string `json:"key"`
-}
-
-type AzureSubscription struct {
-	EnvironmentName       string                     `json:"environmentName"`
-	ID                    string                     `json:"id"`
-	IsDefault             bool                       `json:"isDefault"`
-	ManagementCertificate AzureManagementCertificate `json:"managementCertificate"`
-	ManagementEndpointURL string                     `json:"managementEndpointUrl"`
-	Name                  string                     `json:"name"`
-	RegisteredProviders   []string                   `json:"registeredProviders"`
-	State                 string                     `json:"state"`
-}
-
-// AzureProfile represents a parsed Azure Profile Configuration File.
-type AzureProfile struct {
-	Environments  []AzureEnvironment  `json:"environments"`
-	Subscriptions []AzureSubscription `json:"subscriptions"`
-}
-
 type AzureCredentials struct {
 	ClientID                       string `json:"clientId"`
 	ClientSecret                   string `json:"clientSecret"`
@@ -106,85 +63,7 @@ type AzureCredentials struct {
 	ManagementEndpointURL          string `json:"managementEndpointUrl"`
 }
 
-// AsOptions converts all subscriptions into a slice of Options.
-// If there is an environment with a name matching the subscription, that environment's storage endpoint will be copied to the options.
-func (ap *AzureProfile) AsOptions() []Options {
-	var o []Options
-
-	for _, sub := range ap.Subscriptions {
-		var cert []byte
-		if len(sub.ManagementCertificate.Key) > 0 || len(sub.ManagementCertificate.Cert) > 0 {
-			cert = bytes.Join([][]byte{[]byte(sub.ManagementCertificate.Key), []byte(sub.ManagementCertificate.Cert)}, []byte("\n"))
-		}
-		newo := Options{
-			SubscriptionName:      sub.Name,
-			SubscriptionID:        sub.ID,
-			ManagementURL:         sub.ManagementEndpointURL,
-			ManagementCertificate: cert,
-		}
-
-		// find the storage endpoint for the subscription
-		for _, e := range ap.Environments {
-			if e.Name == sub.EnvironmentName {
-				newo.StorageEndpointSuffix = e.StorageEndpointSuffix
-				break
-			}
-		}
-
-		o = append(o, newo)
-	}
-
-	return o
-}
-
-type SubFilter struct {
-	name string
-	id   string
-}
-
-func FilterByName(name string) SubFilter {
-	return SubFilter{name: name}
-}
-func FilterByID(id string) SubFilter {
-	return SubFilter{id: id}
-}
-func (s *SubFilter) IsEmpty() bool {
-	return s.name == "" && s.id == ""
-}
-func (s *SubFilter) Matches(opts *Options) bool {
-	if s.name != "" && opts.SubscriptionName == s.name {
-		return true
-	}
-	if s.id != "" && opts.SubscriptionID == s.id {
-		return true
-	}
-	return false
-}
-
-// SubscriptionOptions returns the name subscription in the Azure profile as a Options struct.
-// If the subscription name is "", the first subscription is returned.
-// If there are no subscriptions or the named subscription is not found, SubscriptionOptions returns nil.
-func (ap *AzureProfile) SubscriptionOptions(filter SubFilter) *Options {
-	opts := ap.AsOptions()
-
-	if len(opts) == 0 {
-		return nil
-	}
-
-	if filter.IsEmpty() {
-		return &opts[0]
-	} else {
-		for _, o := range ap.AsOptions() {
-			if filter.Matches(&o) {
-				return &o
-			}
-		}
-	}
-
-	return nil
-}
-
-// ReadAzureSubscription decodes an Azure Subscription, as created by
+// ReadAzureCredentials decodes an Azure Subscription, as created by
 // the Azure Cross-platform CLI.
 //
 // If path is empty, value of the environment variable
@@ -209,27 +88,6 @@ func ReadAzureCredentials(path string) (*AzureCredentials, error) {
 	}
 
 	return &ac, nil
-}
-
-// ReadAzureProfile decodes an Azure Profile, as created by the Azure Cross-platform CLI.
-//
-// If path is empty, $HOME/.azure/azureProfile.json is read.
-func ReadAzureProfile(path string) (*AzureProfile, error) {
-	contents, err := readBOMFile(path, AzureProfilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	var ap AzureProfile
-	if err := json.Unmarshal(contents, &ap); err != nil {
-		return nil, err
-	}
-
-	if len(ap.Subscriptions) == 0 {
-		return nil, fmt.Errorf("Azure profile %q contains no subscriptions", path)
-	}
-
-	return &ap, nil
 }
 
 func readBOMFile(path, defaultFilename string) ([]byte, error) {
